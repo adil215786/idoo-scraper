@@ -712,9 +712,15 @@ def safe_quit(driver):
         pass
 
 
-def send_email_with_attachment(subject, body, attachment_path, recipient_email):
+def send_email_with_attachments(subject, body, attachment_paths, recipient_email):
     """
-    Send email with Excel attachment using Gmail SMTP
+    Send email with multiple Excel attachments using Gmail SMTP
+    
+    Args:
+        subject: Email subject
+        body: Email body text
+        attachment_paths: List of file paths to attach
+        recipient_email: Email address to send to
     
     Requires environment variables:
     - GMAIL_USER: Your Gmail address
@@ -748,28 +754,35 @@ def send_email_with_attachment(subject, body, attachment_path, recipient_email):
         # Add body
         msg.attach(MIMEText(body, 'plain'))
         
-        # Attach file
-        if os.path.exists(attachment_path):
-            filename = os.path.basename(attachment_path)
-            with open(attachment_path, 'rb') as attachment:
-                part = MIMEBase('application', 'octet-stream')
-                part.set_payload(attachment.read())
-                encoders.encode_base64(part)
-                part.add_header('Content-Disposition', f'attachment; filename= {filename}')
-                msg.attach(part)
-        else:
-            logger.error(f"Attachment file not found: {attachment_path}")
+        # Attach all files
+        attached_count = 0
+        for attachment_path in attachment_paths:
+            if os.path.exists(attachment_path):
+                filename = os.path.basename(attachment_path)
+                with open(attachment_path, 'rb') as attachment:
+                    part = MIMEBase('application', 'octet-stream')
+                    part.set_payload(attachment.read())
+                    encoders.encode_base64(part)
+                    part.add_header('Content-Disposition', f'attachment; filename= {filename}')
+                    msg.attach(part)
+                    attached_count += 1
+                    logger.info(f"Attached file: {filename}")
+            else:
+                logger.warning(f"Attachment file not found: {attachment_path}")
+        
+        if attached_count == 0:
+            logger.error("No valid attachments found, not sending email")
             return False
         
         # Send email
-        logger.info(f"Sending email to {recipient_email}...")
+        logger.info(f"Sending email with {attached_count} attachment(s) to {recipient_email}...")
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(gmail_user, gmail_password)
         server.send_message(msg)
         server.quit()
         
-        logger.info(f"Email sent successfully to {recipient_email}")
+        logger.info(f"Email sent successfully to {recipient_email} with {attached_count} attachment(s)")
         return True
         
     except Exception as e:
@@ -791,6 +804,16 @@ def main():
         with open(cred_file, "r") as f:
             creds = f.read().split("\n")
 
+        # Get date once at the start
+        from datetime import timezone, timedelta
+        eastern = timezone(timedelta(hours=-5))  # EST is UTC-5
+        now = datetime.now(eastern)
+        today_date = now.strftime('%m-%d-%Y')
+
+        # Track all generated reports
+        generated_reports = []
+        account_summaries = []
+
         for cred in creds:
             if not cred.strip():
                 continue
@@ -806,13 +829,7 @@ def main():
 
             logger.info(f"Processing user: {user_id}")
 
-            # Use Eastern timezone for correct date
-            from datetime import timezone, timedelta
-            eastern = timezone(timedelta(hours=-5))  # EST is UTC-5
-            now = datetime.now(eastern)
-            today_date = now.strftime('%m-%d-%Y')
             account_label = user_id.upper() if user_id.lower().startswith('iot') else user_id
-            subject = f"INVENTORY - {account_label} - {today_date}"
             output_file = f"IDOO-{account_label}-{today_date}.xlsx"
 
             datarows = []
@@ -972,41 +989,22 @@ def main():
                 logger.info(f"Found {len(datarows)} items with stock")
 
                 if download_report(report_user_id, report_password):
-                    if create_new_report(datarows, stocks_data_rows, subject, output_file):
+                    if create_new_report(datarows, stocks_data_rows, f"INVENTORY - {account_label} - {today_date}", output_file):
                         logger.info("Process completed successfully")
                         
-                        # Send email with the report
+                        # Track the generated report
                         download_dir = create_download_directory()
                         report_path = os.path.join(download_dir, output_file)
-                        recipient = os.getenv('RECIPIENT_EMAIL')
                         
-                        if recipient and os.path.exists(report_path):
-                            email_body = f"""
-Hello,
-
-Your T-Mobile inventory report for {account_label} has been generated successfully.
-
-Report Details:
-- Account: {account_label}
-- Date: {today_date}
-- Items with stock: {len(datarows)}
-
-Please find the attached Excel report.
-
-Best regards,
-Automated Inventory System
-"""
-                            send_email_with_attachment(
-                                subject=subject,
-                                body=email_body,
-                                attachment_path=report_path,
-                                recipient_email=recipient
-                            )
+                        if os.path.exists(report_path):
+                            generated_reports.append(report_path)
+                            account_summaries.append({
+                                'account': account_label,
+                                'items_with_stock': len(datarows)
+                            })
+                            logger.info(f"Report tracked for emailing: {output_file}")
                         else:
-                            if not recipient:
-                                logger.info("No recipient email configured, skipping email")
-                            else:
-                                logger.warning(f"Report file not found at {report_path}, cannot send email")
+                            logger.warning(f"Report file not found at {report_path}")
                     else:
                         logger.error("Failed to create report")
                 else:
@@ -1023,6 +1021,48 @@ Automated Inventory System
                     logger.error(f"Error closing browser for {user_id}: {e}")
                 finally:
                     driver = None
+
+        # After processing all accounts, send ONE email with ALL reports
+        if generated_reports:
+            recipient = os.getenv('RECIPIENT_EMAIL')
+            if recipient:
+                # Create account names for subject (e.g., "Philly & Bawa")
+                account_names = [summary['account'].replace('IOT', '').title() for summary in account_summaries]
+                account_names_str = ' & '.join(account_names)
+                
+                subject = f"IDOO Inventory Report - {account_names_str}"
+                
+                # Create detailed email body
+                email_body = f"""Hello,
+
+Your T-Mobile inventory reports have been generated successfully.
+
+Report Summary:
+"""
+                for summary in account_summaries:
+                    email_body += f"  • {summary['account']}: {summary['items_with_stock']} items with stock\n"
+                
+                email_body += f"""
+Date: {today_date}
+Total Reports: {len(generated_reports)}
+
+Please find the attached Excel reports.
+
+Best regards,
+Automated Inventory System
+"""
+                
+                logger.info(f"Sending combined email with {len(generated_reports)} report(s)")
+                send_email_with_attachments(
+                    subject=subject,
+                    body=email_body,
+                    attachment_paths=generated_reports,
+                    recipient_email=recipient
+                )
+            else:
+                logger.info("No recipient email configured, skipping email")
+        else:
+            logger.info("No reports were generated, skipping email")
 
     except Exception as e:
         logger.error(f"Unexpected error in main: {e}")
