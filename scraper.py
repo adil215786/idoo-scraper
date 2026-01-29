@@ -135,6 +135,7 @@ def driverinitialize(use_proxy=False):
     No hard coded Chrome major version.
     undetected_chromedriver will auto match the installed Chrome version.
     Fallback uses Selenium Manager (Selenium 4.6+) to auto provision driver.
+    Detects headless environment (GitHub Actions, Docker, etc.)
     """
     dl_dir = create_download_directory()
     logger.info(f"Downloads will save to: {dl_dir}")
@@ -148,11 +149,21 @@ def driverinitialize(use_proxy=False):
         "safebrowsing.enabled": True
     }
 
+    # Detect if running in headless environment (GitHub Actions, Docker, etc.)
+    is_headless_env = os.getenv('CI') == 'true' or os.getenv('GITHUB_ACTIONS') == 'true' or not os.environ.get('DISPLAY')
+    
+    if is_headless_env:
+        logger.info("Headless environment detected (GitHub Actions/CI) - using headless mode")
+
     try:
         import undetected_chromedriver as uc
 
         chrome_options = uc.ChromeOptions()
-        chrome_options.add_argument("--start-maximized")
+        if is_headless_env:
+            chrome_options.add_argument("--headless=new")
+            chrome_options.add_argument("--window-size=1920,1080")
+        else:
+            chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
@@ -173,7 +184,11 @@ def driverinitialize(use_proxy=False):
             from selenium.webdriver.chrome.options import Options
 
             chrome_options = Options()
-            chrome_options.add_argument("--start-maximized")
+            if is_headless_env:
+                chrome_options.add_argument("--headless=new")
+                chrome_options.add_argument("--window-size=1920,1080")
+            else:
+                chrome_options.add_argument("--start-maximized")
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--disable-gpu")
