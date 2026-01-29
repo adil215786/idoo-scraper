@@ -1,8 +1,7 @@
 name: T-Mobile Inventory Scraper
 
 on:
-  schedule:
-    - cron: '0 14 * * 1,3,5'
+  # Manual trigger only - no automatic schedule
   workflow_dispatch:
 
 jobs:
