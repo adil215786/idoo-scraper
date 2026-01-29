@@ -712,9 +712,74 @@ def safe_quit(driver):
         pass
 
 
+def send_email_with_attachment(subject, body, attachment_path, recipient_email):
+    """
+    Send email with Excel attachment using Gmail SMTP
+    
+    Requires environment variables:
+    - GMAIL_USER: Your Gmail address
+    - GMAIL_APP_PASSWORD: Gmail App Password (not regular password)
+    - RECIPIENT_EMAIL: Email address to send reports to
+    """
+    try:
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+        from email.mime.base import MIMEBase
+        from email import encoders
+        
+        gmail_user = os.getenv('GMAIL_USER')
+        gmail_password = os.getenv('GMAIL_APP_PASSWORD')
+        
+        if not gmail_user or not gmail_password:
+            logger.error("Gmail credentials not found in environment variables")
+            return False
+        
+        if not recipient_email:
+            logger.warning("No recipient email specified, skipping email")
+            return False
+            
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = gmail_user
+        msg['To'] = recipient_email
+        msg['Subject'] = subject
+        
+        # Add body
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Attach file
+        if os.path.exists(attachment_path):
+            filename = os.path.basename(attachment_path)
+            with open(attachment_path, 'rb') as attachment:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(attachment.read())
+                encoders.encode_base64(part)
+                part.add_header('Content-Disposition', f'attachment; filename= {filename}')
+                msg.attach(part)
+        else:
+            logger.error(f"Attachment file not found: {attachment_path}")
+            return False
+        
+        # Send email
+        logger.info(f"Sending email to {recipient_email}...")
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(gmail_user, gmail_password)
+        server.send_message(msg)
+        server.quit()
+        
+        logger.info(f"Email sent successfully to {recipient_email}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}")
+        logger.error(traceback.format_exc())
+        return False
+
+
 def main():
     """Main function with comprehensive error handling"""
-    driver = None
     total_start_time = time.time()
 
     try:
@@ -726,12 +791,11 @@ def main():
         with open(cred_file, "r") as f:
             creds = f.read().split("\n")
 
-        driver = driverinitialize()
-
         for cred in creds:
             if not cred.strip():
                 continue
 
+            driver = None
             try:
                 user_part, report_part = cred.split("||")
                 user_id, password = user_part.split("|")
@@ -742,7 +806,10 @@ def main():
 
             logger.info(f"Processing user: {user_id}")
 
-            now = datetime.now()
+            # Use Eastern timezone for correct date
+            from datetime import timezone, timedelta
+            eastern = timezone(timedelta(hours=-5))  # EST is UTC-5
+            now = datetime.now(eastern)
             today_date = now.strftime('%m-%d-%Y')
             account_label = user_id.upper() if user_id.lower().startswith('iot') else user_id
             subject = f"INVENTORY - {account_label} - {today_date}"
@@ -750,6 +817,13 @@ def main():
 
             datarows = []
             stocks_data_rows = []
+
+            # Initialize fresh browser for this account
+            try:
+                driver = driverinitialize()
+            except Exception as e:
+                logger.error(f"Failed to initialize browser for {user_id}: {e}")
+                continue
 
             driver.get("https://www.t-mobiledealerordering.com/b2b_tmo/init.do")
             time.sleep(3)
@@ -900,29 +974,60 @@ def main():
                 if download_report(report_user_id, report_password):
                     if create_new_report(datarows, stocks_data_rows, subject, output_file):
                         logger.info("Process completed successfully")
+                        
+                        # Send email with the report
+                        download_dir = create_download_directory()
+                        report_path = os.path.join(download_dir, output_file)
+                        recipient = os.getenv('RECIPIENT_EMAIL')
+                        
+                        if recipient and os.path.exists(report_path):
+                            email_body = f"""
+Hello,
+
+Your T-Mobile inventory report for {account_label} has been generated successfully.
+
+Report Details:
+- Account: {account_label}
+- Date: {today_date}
+- Items with stock: {len(datarows)}
+
+Please find the attached Excel report.
+
+Best regards,
+Automated Inventory System
+"""
+                            send_email_with_attachment(
+                                subject=subject,
+                                body=email_body,
+                                attachment_path=report_path,
+                                recipient_email=recipient
+                            )
+                        else:
+                            if not recipient:
+                                logger.info("No recipient email configured, skipping email")
+                            else:
+                                logger.warning(f"Report file not found at {report_path}, cannot send email")
                     else:
                         logger.error("Failed to create report")
                 else:
                     logger.error("Failed to download report")
 
             logger.info(f"Completed processing for user: {user_id}")
+            
+            # Close browser after processing this account
+            if driver:
+                try:
+                    driver.quit()
+                    logger.info(f"Browser closed for user: {user_id}")
+                except Exception as e:
+                    logger.error(f"Error closing browser for {user_id}: {e}")
+                finally:
+                    driver = None
 
     except Exception as e:
         logger.error(f"Unexpected error in main: {e}")
         logger.error(traceback.format_exc())
-        if driver:
-            try:
-                driver.save_screenshot(os.path.join(root_path, "error_screenshot.png"))
-            except Exception:
-                pass
     finally:
-        if driver:
-            try:
-                driver.quit()
-                driver = None
-            except Exception:
-                pass
-
         logger.info("All users processed.")
         total_time = time.time() - total_start_time
         logger.info(f"Total execution time: {total_time:.2f} seconds")
