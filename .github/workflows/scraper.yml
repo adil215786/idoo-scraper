@@ -1,7 +1,6 @@
 name: T-Mobile Inventory Scraper
 
 on:
-  # Manual trigger only - no automatic schedule
   workflow_dispatch:
 
 jobs:
@@ -38,6 +37,9 @@ jobs:
         python scraper.py
       env:
         WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        GMAIL_USER: ${{ secrets.GMAIL_USER }}
+        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
     
     - name: Upload generated reports
       uses: actions/upload-artifact@v4
