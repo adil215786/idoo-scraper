@@ -485,8 +485,8 @@ def download_report(report_user_id, report_password):
                 logger.error(f"Error closing report driver: {e}")
 
 
-def create_new_report(ids, stock_data_rows, subject, output_file):
-    """Create new report with enhanced formatting"""
+def create_new_report(ids, stock_data_rows, subject, output_file, account_label):
+    """Create new report with enhanced formatting and account-specific filtering"""
     try:
         from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
@@ -548,6 +548,28 @@ def create_new_report(ids, stock_data_rows, subject, output_file):
             '7 Days', 'Item Cost', 'Total Qty', 'Suggested'
         ])
         out_df.drop_duplicates(inplace=True)
+
+        # Apply account-specific filtering
+        logger.info(f"Applying filters for account: {account_label}")
+        
+        # Filter by account type
+        if 'PHILLY' in account_label.upper():
+            # IOTPHILLY: Remove BAWA market
+            out_df = out_df[out_df['Market'] != 'BAWA']
+            logger.info("IOTPHILLY: Removed BAWA market")
+        elif 'BAWA' in account_label.upper():
+            # IOTBAWA: Keep only BAWA market
+            out_df = out_df[out_df['Market'] == 'BAWA']
+            logger.info("IOTBAWA: Kept only BAWA market (removed DELAWARE, PHILADELPHIA, PPUSHERS)")
+        
+        # Remove "PHILLY - HUB" store from all accounts
+        out_df = out_df[out_df['Store Name'] != 'PHILLY - HUB']
+        logger.info("Removed 'PHILLY - HUB' store")
+        
+        # Check if we still have data after filtering
+        if out_df.empty:
+            logger.warning("No data remaining after filtering")
+            return False
 
         formatted_df = out_df.copy()
         formatted_df = formatted_df.drop(columns=['StoreID', 'Manufacturer'])
@@ -979,7 +1001,7 @@ def main():
                         pass
                     time.sleep(3)
 
-            SIM_CARD_SKU = "NC128TRIPLESIM"
+            SIM_CARD_SKU = "METROTRIPLESIM"
             if SIM_CARD_SKU not in datarows:
                 datarows.append(SIM_CARD_SKU)
 
@@ -989,7 +1011,7 @@ def main():
                 logger.info(f"Found {len(datarows)} items with stock")
 
                 if download_report(report_user_id, report_password):
-                    if create_new_report(datarows, stocks_data_rows, f"INVENTORY - {account_label} - {today_date}", output_file):
+                    if create_new_report(datarows, stocks_data_rows, f"INVENTORY - {account_label} - {today_date}", output_file, account_label):
                         logger.info("Process completed successfully")
                         
                         # Track the generated report
