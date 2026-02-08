@@ -38,7 +38,7 @@ class WebhookHandler(logging.Handler):
 
                 if "discord.com" in self.webhook_url:
                     payload = {
-                        "content": f"ðŸš¨ **{self.service_name} Error**",
+                        "content": f"🚨 **{self.service_name} Error**",
                         "embeds": [{
                             "title": "Error Report",
                             "description": f"```{log_entry}```",
@@ -49,7 +49,7 @@ class WebhookHandler(logging.Handler):
                     }
                 else:
                     payload = {
-                        "text": f"ðŸš¨ *{self.service_name} Error*\n```{log_entry}```"
+                        "text": f"🚨 *{self.service_name} Error*\n```{log_entry}```"
                     }
 
                 requests.post(self.webhook_url, json=payload, timeout=5)
@@ -281,7 +281,7 @@ def do_login(driver, user_id, password, max_retries=1):
     return False
 
 
-def download_report(report_user_id, report_password):
+def download_report(report_user_id, report_password, days=7):
     """Download report with improved error handling"""
     report_driver = None
     try:
@@ -397,9 +397,9 @@ def download_report(report_user_id, report_password):
             time.sleep(0.5)
             days_field.clear()
             time.sleep(1)
-            days_field.send_keys("7")
+            days_field.send_keys(str(days))
             time.sleep(1)
-            logger.info("Set days to 7")
+            logger.info(f"Set days to {days}")
 
         logger.info("Looking for Generate button...")
         generate_button = wait_for_element(report_driver, '//span[contains(text(),"Generate")]')
@@ -485,7 +485,7 @@ def download_report(report_user_id, report_password):
                 logger.error(f"Error closing report driver: {e}")
 
 
-def create_new_report(ids, stock_data_rows, subject, output_file, account_label):
+def create_new_report(ids, stock_data_rows, subject, output_file, account_label, days=7):
     """Create new report with enhanced formatting and account-specific filtering"""
     try:
         from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -503,8 +503,19 @@ def create_new_report(ids, stock_data_rows, subject, output_file, account_label)
         store_name = ""
         datarows = []
 
+        days_col = f"{days} Days"
+
         has_on_hand = 'On Hand' in df.columns
         has_on_po = 'On PO' in df.columns
+        has_days_col = days_col in df.columns
+
+        if not has_days_col:
+            logger.warning(f"Column '{days_col}' not found in report. Available columns: {list(df.columns)}")
+            # Fallback: try "7 Days" if looking for something else
+            if '7 Days' in df.columns:
+                days_col = '7 Days'
+                has_days_col = True
+                logger.info(f"Falling back to '7 Days' column")
 
         for _, row in df.iterrows():
             data_row = row.to_dict()
@@ -533,7 +544,7 @@ def create_new_report(ids, stock_data_rows, subject, output_file, account_label)
                 data_row.get("Manufacturer"), item_number,
                 data_row.get("Item Description"),
                 on_hand, on_po,
-                data_row.get("7 Days"), data_row.get("Item Cost"),
+                data_row.get(days_col) if has_days_col else "", data_row.get("Item Cost"),
                 data_row.get("Total Qty"), data_row.get("Suggested")
             ]
             datarows.append(datarow)
@@ -542,10 +553,12 @@ def create_new_report(ids, stock_data_rows, subject, output_file, account_label)
             logger.warning("No matching items found in report")
             return False
 
+        days_label = f"{days} Days"
+
         out_df = DataFrame(datarows, columns=[
             'Market', 'StoreID', 'Store Name', 'Manufacturer',
             'Item Number', 'Item Description', 'On Hand', 'On PO',
-            '7 Days', 'Item Cost', 'Total Qty', 'Suggested'
+            days_label, 'Item Cost', 'Total Qty', 'Suggested'
         ])
         out_df.drop_duplicates(inplace=True)
 
@@ -581,7 +594,7 @@ def create_new_report(ids, stock_data_rows, subject, output_file, account_label)
 
         formatted_df.columns = [
             'Item Cost', 'Market', 'Store Name', 'Item Number', 'Item Description',
-            'On Hand', 'On PO', '7 Days', 'Total Qty', 'Suggested'
+            'On Hand', 'On PO', days_label, 'Total Qty', 'Suggested'
         ]
 
         formatted_df['Qty'] = 0
@@ -852,7 +865,8 @@ def main():
             logger.info(f"Processing user: {user_id}")
 
             account_label = user_id.upper() if user_id.lower().startswith('iot') else user_id
-            output_file = f"IDOO-{account_label}-{today_date}.xlsx"
+            output_file_7 = f"IDOO-{account_label}-7 Days-{today_date}.xlsx"
+            output_file_14 = f"IDOO-{account_label}-14 Days-{today_date}.xlsx"
 
             datarows = []
             stocks_data_rows = []
@@ -1010,27 +1024,49 @@ def main():
             else:
                 logger.info(f"Found {len(datarows)} items with stock")
 
-                if download_report(report_user_id, report_password):
-                    if create_new_report(datarows, stocks_data_rows, f"INVENTORY - {account_label} - {today_date}", output_file, account_label):
-                        logger.info("Process completed successfully")
+                # --- 7-Day Report ---
+                logger.info(f"=== Starting 7-Day Report for {account_label} ===")
+                if download_report(report_user_id, report_password, days=7):
+                    if create_new_report(datarows, stocks_data_rows, f"INVENTORY - {account_label} - 7 Days - {today_date}", output_file_7, account_label, days=7):
+                        logger.info("7-Day report completed successfully")
                         
-                        # Track the generated report
                         download_dir = create_download_directory()
-                        report_path = os.path.join(download_dir, output_file)
+                        report_path = os.path.join(download_dir, output_file_7)
                         
                         if os.path.exists(report_path):
                             generated_reports.append(report_path)
-                            account_summaries.append({
-                                'account': account_label,
-                                'items_with_stock': len(datarows)
-                            })
-                            logger.info(f"Report tracked for emailing: {output_file}")
+                            logger.info(f"7-Day report tracked for emailing: {output_file_7}")
                         else:
-                            logger.warning(f"Report file not found at {report_path}")
+                            logger.warning(f"7-Day report file not found at {report_path}")
                     else:
-                        logger.error("Failed to create report")
+                        logger.error("Failed to create 7-Day report")
                 else:
-                    logger.error("Failed to download report")
+                    logger.error("Failed to download 7-Day report")
+
+                # --- 14-Day Report ---
+                logger.info(f"=== Starting 14-Day Report for {account_label} ===")
+                if download_report(report_user_id, report_password, days=14):
+                    if create_new_report(datarows, stocks_data_rows, f"INVENTORY - {account_label} - 14 Days - {today_date}", output_file_14, account_label, days=14):
+                        logger.info("14-Day report completed successfully")
+                        
+                        download_dir = create_download_directory()
+                        report_path = os.path.join(download_dir, output_file_14)
+                        
+                        if os.path.exists(report_path):
+                            generated_reports.append(report_path)
+                            logger.info(f"14-Day report tracked for emailing: {output_file_14}")
+                        else:
+                            logger.warning(f"14-Day report file not found at {report_path}")
+                    else:
+                        logger.error("Failed to create 14-Day report")
+                else:
+                    logger.error("Failed to download 14-Day report")
+
+                # Track account summary
+                account_summaries.append({
+                    'account': account_label,
+                    'items_with_stock': len(datarows)
+                })
 
             logger.info(f"Completed processing for user: {user_id}")
             
@@ -1066,7 +1102,7 @@ Report Summary:
                 
                 email_body += f"""
 Date: {today_date}
-Total Reports: {len(generated_reports)}
+Total Reports: {len(generated_reports)} ({len(generated_reports) // 2} x 7-Day + {len(generated_reports) // 2} x 14-Day)
 
 Please find the attached Excel reports.
 
