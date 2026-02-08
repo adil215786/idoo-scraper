@@ -157,6 +157,21 @@ def driverinitialize(use_proxy=False):
 
     try:
         import undetected_chromedriver as uc
+        import re
+
+        # Auto-detect installed Chrome version to avoid version mismatch
+        version_main = None
+        try:
+            chrome_version_result = subprocess.run(
+                ['google-chrome', '--version'], capture_output=True, text=True, timeout=5
+            )
+            if chrome_version_result.returncode == 0:
+                match = re.search(r'(\d+)\.', chrome_version_result.stdout)
+                if match:
+                    version_main = int(match.group(1))
+                    logger.info(f"Detected Chrome version: {version_main}")
+        except Exception:
+            logger.info("Could not detect Chrome version, letting undetected_chromedriver auto-detect")
 
         chrome_options = uc.ChromeOptions()
         if is_headless_env:
@@ -170,7 +185,7 @@ def driverinitialize(use_proxy=False):
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("prefs", prefs)
 
-        driver = uc.Chrome(options=chrome_options)
+        driver = uc.Chrome(options=chrome_options, version_main=version_main)
 
         driver.implicitly_wait(10)
         logger.info("Undetected Chrome driver initialized successfully")
