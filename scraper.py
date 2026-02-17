@@ -155,6 +155,30 @@ def driverinitialize(use_proxy=False):
     if is_headless_env:
         logger.info("Headless environment detected (GitHub Actions/CI) - using headless mode")
 
+    # Auto-detect installed Chrome version
+    chrome_version = None
+    try:
+        result = subprocess.run(
+            ["google-chrome", "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            version_str = result.stdout.strip().split()[-1]
+            chrome_version = int(version_str.split('.')[0])
+            logger.info(f"Detected Chrome version: {chrome_version}")
+    except Exception:
+        try:
+            result = subprocess.run(
+                ["google-chrome-stable", "--version"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                version_str = result.stdout.strip().split()[-1]
+                chrome_version = int(version_str.split('.')[0])
+                logger.info(f"Detected Chrome version: {chrome_version}")
+        except Exception:
+            logger.warning("Could not detect Chrome version, letting UC auto-detect")
+
     try:
         import undetected_chromedriver as uc
 
@@ -170,10 +194,24 @@ def driverinitialize(use_proxy=False):
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("prefs", prefs)
 
-        driver = uc.Chrome(options=chrome_options)
+        if chrome_version:
+            driver = uc.Chrome(options=chrome_options, version_main=chrome_version)
+        else:
+            driver = uc.Chrome(options=chrome_options)
+
+        # Enable downloads in headless mode
+        if is_headless_env:
+            try:
+                driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                    "behavior": "allow",
+                    "downloadPath": dl_dir
+                })
+                logger.info(f"Headless download directory set to: {dl_dir}")
+            except Exception as e:
+                logger.warning(f"Could not set headless download path via CDP: {e}")
 
         driver.implicitly_wait(10)
-        logger.info("Undetected Chrome driver initialized successfully")
+        logger.info(f"Undetected Chrome driver initialized successfully (version_main={chrome_version})")
         return driver
 
     except Exception as e:
@@ -198,6 +236,17 @@ def driverinitialize(use_proxy=False):
             chrome_options.add_experimental_option("useAutomationExtension", False)
 
             driver = webdriver.Chrome(options=chrome_options)
+
+            # Enable downloads in headless mode
+            if is_headless_env:
+                try:
+                    driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                        "behavior": "allow",
+                        "downloadPath": dl_dir
+                    })
+                    logger.info(f"Headless download directory set to: {dl_dir}")
+                except Exception as e:
+                    logger.warning(f"Could not set headless download path via CDP: {e}")
 
             driver.implicitly_wait(10)
             logger.info("Selenium Chrome driver initialized successfully")
