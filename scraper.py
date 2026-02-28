@@ -104,26 +104,55 @@ def create_download_directory():
     return os.path.abspath(download_dir)
 
 
-def wait_for_download(dir_path, target_name="ReOrder Custom Report.xlsx", timeout=180):
+def wait_for_download(dir_path, target_name="ReOrder Custom Report.xlsx", timeout=240):
+    """
+    Wait for a download to complete in dir_path.
+    Handles headless Chrome (GitHub Actions) where files may land with
+    a different name or after a slight delay.
+    """
     start = time.time()
     final_path = os.path.join(dir_path, target_name)
-    while time.time() - start < timeout:
-        partials = glob(os.path.join(dir_path, "*.crdownload"))
-        if not partials:
-            if os.path.exists(final_path):
-                return final_path
+    logger.info(f"Waiting for download in: {dir_path}")
 
-            xlsxs = sorted(glob(os.path.join(dir_path, "*.xlsx")), key=os.path.getmtime, reverse=True)
-            if xlsxs:
-                newest = xlsxs[0]
-                try:
+    while time.time() - start < timeout:
+        elapsed = time.time() - start
+
+        # Log progress every 30 seconds
+        if int(elapsed) % 30 == 0 and int(elapsed) > 0:
+            existing = glob(os.path.join(dir_path, "*"))
+            logger.info(f"Download wait: {int(elapsed)}s elapsed. Files in dir: {[os.path.basename(f) for f in existing]}")
+
+        # Check for in-progress downloads
+        partials = glob(os.path.join(dir_path, "*.crdownload")) + glob(os.path.join(dir_path, "*.tmp"))
+        if partials:
+            time.sleep(2)
+            continue
+
+        # Already have the target file
+        if os.path.exists(final_path) and os.path.getsize(final_path) > 0:
+            logger.info(f"Download complete: {final_path} ({os.path.getsize(final_path)} bytes)")
+            return final_path
+
+        # Look for any new xlsx file and rename it
+        xlsxs = sorted(glob(os.path.join(dir_path, "*.xlsx")), key=os.path.getmtime, reverse=True)
+        if xlsxs:
+            newest = xlsxs[0]
+            try:
+                if os.path.getsize(newest) > 0:
                     if newest != final_path:
                         os.replace(newest, final_path)
-                except PermissionError:
-                    pass
-                if os.path.exists(final_path):
-                    return final_path
-        time.sleep(1)
+                        logger.info(f"Renamed '{os.path.basename(newest)}' to '{target_name}'")
+                    if os.path.exists(final_path):
+                        logger.info(f"Download complete (renamed): {final_path}")
+                        return final_path
+            except (PermissionError, OSError) as e:
+                logger.warning(f"Could not rename download file: {e}")
+
+        time.sleep(2)
+
+    # Final attempt: log directory contents for debugging
+    existing = glob(os.path.join(dir_path, "*"))
+    logger.error(f"Download timed out after {timeout}s. Files found: {[os.path.basename(f) for f in existing]}")
     return None
 
 
@@ -173,6 +202,19 @@ def driverinitialize(use_proxy=False):
         driver = uc.Chrome(options=chrome_options)
 
         driver.implicitly_wait(10)
+
+        # CRITICAL FIX: In headless mode (GitHub Actions), Chrome ignores
+        # the prefs download directory. Must set it via CDP instead.
+        if is_headless_env:
+            try:
+                driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                    "behavior": "allow",
+                    "downloadPath": dl_dir
+                })
+                logger.info(f"CDP download path set to: {dl_dir}")
+            except Exception as cdp_err:
+                logger.warning(f"CDP download path set failed (non-fatal): {cdp_err}")
+
         logger.info("Undetected Chrome driver initialized successfully")
         return driver
 
@@ -200,6 +242,18 @@ def driverinitialize(use_proxy=False):
             driver = webdriver.Chrome(options=chrome_options)
 
             driver.implicitly_wait(10)
+
+            # CRITICAL FIX: Apply CDP download path for headless mode
+            if is_headless_env:
+                try:
+                    driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                        "behavior": "allow",
+                        "downloadPath": dl_dir
+                    })
+                    logger.info(f"CDP download path set to: {dl_dir}")
+                except Exception as cdp_err:
+                    logger.warning(f"CDP download path set failed (non-fatal): {cdp_err}")
+
             logger.info("Selenium Chrome driver initialized successfully")
             return driver
 
@@ -440,11 +494,30 @@ def download_report(report_user_id, report_password):
                     logger.info("Clicking Excel export button...")
                     export_button.click()
 
-                    logger.info("Waiting for download to complete...")
-                    time.sleep(5)
+                    # Give the browser a moment to start the download
+                    time.sleep(3)
 
-                    logger.info("Report downloaded successfully")
-                    return True
+                    dl_dir = create_download_directory()
+                    logger.info(f"Waiting for download to complete in: {dl_dir}")
+                    downloaded = wait_for_download(dl_dir)
+
+                    if downloaded:
+                        logger.info(f"Report downloaded successfully: {downloaded}")
+                        return True
+                    else:
+                        logger.error("Download did not complete within timeout - trying CDP fallback")
+                        # Try clicking export again in case the first click was missed
+                        try:
+                            export_button = report_driver.find_element(By.XPATH, '//div/i[@class="dx-icon dx-icon-export-excel-button"]')
+                            export_button.click()
+                            time.sleep(3)
+                            downloaded = wait_for_download(dl_dir, timeout=120)
+                            if downloaded:
+                                logger.info(f"Report downloaded on retry: {downloaded}")
+                                return True
+                        except Exception as retry_err:
+                            logger.error(f"Export retry failed: {retry_err}")
+                        return False
 
             except NoSuchElementException:
                 pass
@@ -1101,17 +1174,13 @@ if __name__ == "__main__":
 
     warnings.filterwarnings("ignore")
 
-    if platform.system() == "Windows":
-        sys.stderr = open(os.devnull, 'w')
-    else:
-        sys.stderr = open('/dev/null', 'w')
-
+    # NOTE: Do NOT redirect stderr - GitHub Actions needs it for error visibility
     try:
         main()
     except KeyboardInterrupt:
         print("\nScript interrupted by user")
     except Exception as e:
-        sys.stderr = sys.__stderr__
         logger.error(f"Fatal error: {e}")
+        logger.error(traceback.format_exc())
     finally:
         sys.exit(0)
