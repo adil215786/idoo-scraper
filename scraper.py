@@ -367,63 +367,18 @@ def download_report(report_user_id, report_password):
 
                 time.sleep(3)
 
-                inventory_menu = None
-                try:
-                    inventory_menu = report_driver.find_element(By.XPATH, '//span[contains(.,"Inventory Report") and img[contains(@src,"cellularphone.png")]]')
-                except Exception:
-                    try:
-                        inventory_menu = report_driver.find_element(By.XPATH, '//span[contains(.,"Inventory Report")]')
-                    except Exception:
-                        try:
-                            inventory_menu = report_driver.find_element(By.XPATH, '//*[span[contains(.,"Inventory Report")]]')
-                        except Exception:
-                            inventory_menu = None
+                # Verify login succeeded - if we're no longer on the login page, assume success
+                if "index.fwx" not in report_driver.current_url:
+                    login_success = True
+                else:
+                    raise Exception("Still on login page after submit")
 
-                if not inventory_menu:
-                    raise Exception("Inventory Report menu not found")
-
-                login_success = True
                 logger.info("RT POS login successful")
 
-                logger.info("Clicking Inventory Report menu...")
-                try:
-                    parent = inventory_menu.find_element(By.XPATH, '..')
-                    parent.click()
-                except Exception:
-                    try:
-                        inventory_menu.click()
-                    except Exception:
-                        report_driver.execute_script("arguments[0].click();", inventory_menu)
-
-                time.sleep(3)
-
-                reorder_link = None
-                try:
-                    reorder_link = report_driver.find_element(By.XPATH, '//b[contains(text(),"Re-Order Report By Store")]')
-                except Exception:
-                    try:
-                        reorder_link = report_driver.find_element(By.XPATH, '//a[b[contains(text(),"Re-Order Report By Store")]]')
-                    except Exception:
-                        try:
-                            reorder_link = report_driver.find_element(By.XPATH, '//*[contains(.,"Re-Order Report By Store")]')
-                        except Exception:
-                            reorder_link = None
-
-                if reorder_link:
-                    logger.info("Clicking Re Order Report By Store...")
-                    try:
-                        reorder_link.click()
-                    except Exception:
-                        try:
-                            parent = reorder_link.find_element(By.XPATH, '..')
-                            parent.click()
-                        except Exception:
-                            report_driver.execute_script("arguments[0].click();", reorder_link)
-                    time.sleep(5)
-                else:
-                    logger.info("Re Order link not found, navigating directly...")
-                    report_driver.get("https://www.myrtpos.com/newbdi/reorder_custom2.fwx")
-                    time.sleep(5)
+                # Navigate directly to report URL - faster and more reliable than menu clicks
+                logger.info("Navigating directly to reorder_custom2.fwx...")
+                report_driver.get("https://www.myrtpos.com/newbdi/reorder_custom2.fwx")
+                time.sleep(5)
 
                 break
 
