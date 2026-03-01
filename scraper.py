@@ -277,7 +277,7 @@ def wait_for_element(driver, xpath, timeout=10, condition=EC.presence_of_element
         return None
 
 
-def do_login(driver, user_id, password, max_retries=1):
+def do_login(driver, user_id, password, max_retries=3):
     """Login with improved error handling and retry logic"""
     for attempt in range(max_retries):
         try:
@@ -311,7 +311,7 @@ def do_login(driver, user_id, password, max_retries=1):
                 login_button.click()
                 time.sleep(5)
 
-            for _ in range(15):
+            for _ in range(25):
                 try:
                     driver.find_element(By.XPATH, '//frameset[@id="isaTopFS"]')
                     logger.info("Login successful!")
