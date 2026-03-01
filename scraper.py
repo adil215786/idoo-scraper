@@ -487,7 +487,7 @@ def download_report(report_user_id, report_password):
 
         while elapsed_time < max_wait_time:
             try:
-                export_button = report_driver.find_element(By.XPATH, '//div/i[@class="dx-icon dx-icon-export-excel-button"]')
+                export_button = report_driver.find_element(By.XPATH, '//i[@class="dx-icon dx-icon-export-excel-button"]')
                 if export_button:
                     logger.info(f"Report generated successfully after {elapsed_time} seconds")
 
@@ -508,7 +508,7 @@ def download_report(report_user_id, report_password):
                         logger.error("Download did not complete within timeout - trying CDP fallback")
                         # Try clicking export again in case the first click was missed
                         try:
-                            export_button = report_driver.find_element(By.XPATH, '//div/i[@class="dx-icon dx-icon-export-excel-button"]')
+                            export_button = report_driver.find_element(By.XPATH, '//i[@class="dx-icon dx-icon-export-excel-button"]')
                             export_button.click()
                             time.sleep(3)
                             downloaded = wait_for_download(dl_dir, timeout=120)
