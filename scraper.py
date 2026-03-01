@@ -422,7 +422,7 @@ def download_report(report_user_id, report_password):
                     time.sleep(5)
                 else:
                     logger.info("Re Order link not found, navigating directly...")
-                    report_driver.get("https://www.myrtpos.com/newbdi/Reorder_Custom.fwx")
+                    report_driver.get("https://www.myrtpos.com/newbdi/reorder_custom2.fwx")
                     time.sleep(5)
 
                 break
