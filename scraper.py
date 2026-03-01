@@ -367,19 +367,17 @@ def download_report(report_user_id, report_password):
 
                 time.sleep(3)
 
-                # Verify login succeeded - if we're no longer on the login page, assume success
-                if "index.fwx" not in report_driver.current_url:
-                    login_success = True
-                else:
-                    raise Exception("Still on login page after submit")
-
-                logger.info("RT POS login successful")
-
-                # Navigate directly to report URL - faster and more reliable than menu clicks
+                # Navigate directly to report URL - if not logged in it will redirect back to login
                 logger.info("Navigating directly to reorder_custom2.fwx...")
                 report_driver.get("https://www.myrtpos.com/newbdi/reorder_custom2.fwx")
                 time.sleep(5)
 
+                # Now verify: if we got redirected back to login page, login failed
+                if "index.fwx" in report_driver.current_url or "secUserID" in report_driver.page_source:
+                    raise Exception("Redirected back to login - credentials may be wrong or session not established")
+
+                login_success = True
+                logger.info("RT POS login successful")
                 break
 
             except Exception as e:
