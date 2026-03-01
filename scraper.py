@@ -482,56 +482,57 @@ def download_report(report_user_id, report_password):
         time.sleep(5)
 
         max_wait_time = 300
-        poll_interval = 5
+        poll_interval = 3
         elapsed_time = 0
 
         while elapsed_time < max_wait_time:
             try:
-                export_button = report_driver.find_element(By.XPATH, '//i[@class="dx-icon dx-icon-export-excel-button"]')
-                if export_button:
-                    logger.info(f"Report generated successfully after {elapsed_time} seconds")
+                # First confirm data rows are actually present before touching export
+                data_rows = report_driver.find_elements(By.XPATH, '//tr[contains(@class,"dx-row dx-data-row")] | //td[contains(@class,"dx-cell")]')
+                has_data = len(data_rows) > 0
 
-                    logger.info("Clicking Excel export button...")
-                    export_button.click()
+                if has_data:
+                    # Now check the export button is visible and enabled
+                    export_buttons = report_driver.find_elements(By.XPATH, '//i[@class="dx-icon dx-icon-export-excel-button"]')
+                    visible_buttons = [b for b in export_buttons if b.is_displayed()]
 
-                    # Give the browser a moment to start the download
-                    time.sleep(3)
+                    if visible_buttons:
+                        export_button = visible_buttons[0]
+                        logger.info(f"Report data ready, export button visible after {elapsed_time} seconds")
 
-                    dl_dir = create_download_directory()
-                    logger.info(f"Waiting for download to complete in: {dl_dir}")
-                    downloaded = wait_for_download(dl_dir)
-
-                    if downloaded:
-                        logger.info(f"Report downloaded successfully: {downloaded}")
-                        return True
-                    else:
-                        logger.error("Download did not complete within timeout - trying CDP fallback")
-                        # Try clicking export again in case the first click was missed
+                        logger.info("Clicking Excel export button...")
                         try:
-                            export_button = report_driver.find_element(By.XPATH, '//i[@class="dx-icon dx-icon-export-excel-button"]')
                             export_button.click()
-                            time.sleep(3)
-                            downloaded = wait_for_download(dl_dir, timeout=120)
-                            if downloaded:
-                                logger.info(f"Report downloaded on retry: {downloaded}")
-                                return True
-                        except Exception as retry_err:
-                            logger.error(f"Export retry failed: {retry_err}")
-                        return False
+                        except Exception:
+                            report_driver.execute_script("arguments[0].click();", export_button)
 
-            except NoSuchElementException:
-                pass
+                        time.sleep(3)
+
+                        dl_dir = create_download_directory()
+                        logger.info(f"Waiting for download to complete in: {dl_dir}")
+                        downloaded = wait_for_download(dl_dir)
+
+                        if downloaded:
+                            logger.info(f"Report downloaded successfully: {downloaded}")
+                            return True
+                        else:
+                            logger.error("Download did not complete within timeout - trying CDP fallback")
+                            try:
+                                export_buttons = report_driver.find_elements(By.XPATH, '//i[@class="dx-icon dx-icon-export-excel-button"]')
+                                visible_buttons = [b for b in export_buttons if b.is_displayed()]
+                                if visible_buttons:
+                                    report_driver.execute_script("arguments[0].click();", visible_buttons[0])
+                                time.sleep(3)
+                                downloaded = wait_for_download(dl_dir, timeout=120)
+                                if downloaded:
+                                    logger.info(f"Report downloaded on retry: {downloaded}")
+                                    return True
+                            except Exception as retry_err:
+                                logger.error(f"Export retry failed: {retry_err}")
+                            return False
+
             except Exception as e:
                 logger.debug(f"Polling check at {elapsed_time}s: {type(e).__name__}")
-
-            try:
-                error_elements = report_driver.find_elements(By.XPATH, '//*[contains(text(),"Error") or contains(text(),"error") or contains(text(),"failed")]')
-                for elem in error_elements:
-                    if elem.is_displayed() and elem.text:
-                        logger.error(f"Error message found: {elem.text}")
-                        return False
-            except Exception:
-                pass
 
             time.sleep(poll_interval)
             elapsed_time += poll_interval
